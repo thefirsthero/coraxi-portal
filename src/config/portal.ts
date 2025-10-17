@@ -7,15 +7,15 @@ export type Portal = {
 
 export const portal: Portal[] = [
   {
-    title: "Shadcn UI",
-    description: "Beautifully designed components that you can copy and paste into your apps. Accessible. Customizable. Open Source.",
-    href: "https://ui.shadcn.com/",
-    image: "/avatars/shadcn.jpg",
+    title: "Portfolio / CV Website",
+    description: "My personal portfolio and CV website.",
+    href: "https://vukosi.coraxi.com/",
+    image: "images/portfolio.png",
   },
   {
-    title: "Coraxi",
-    description: "A collection of open-source projects.",
-    href: "https://coraxi.org/",
-    image: "https://avatars.githubusercontent.com/u/6924319?s=200&v=4",
+    title: "Calchub",
+    description: "A collection of various useful calculators.",
+    href: "https://calchub.coraxi.com/",
+    image: "/images/calchub.png",
   },
 ];
