@@ -7,7 +7,7 @@ export type Portal = {
 
 export const portal: Portal[] = [
   {
-    title: "Portfolio / CV Website",
+    title: "Portfolio Website",
     description: "My personal portfolio and CV website.",
     href: "https://vukosi.coraxi.com/",
     image: "images/portfolio.png",

@@ -10,6 +10,7 @@ import {
 import { ChevronDown } from "lucide-react";
 import { AppLogo } from "./app-logo";
 import { AppSidebar } from "./app-sidebar";
+import { ModeToggle } from "./mode-toggle";
 
 export function AppHeader() {
   const location = useLocation();
@@ -85,6 +86,9 @@ export function AppHeader() {
                 ),
               )}
             </nav>
+          </div>
+          <div className="flex items-center gap-2">
+            <ModeToggle />
           </div>
         </div>
       </div>
