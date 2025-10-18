@@ -55,8 +55,7 @@ export default function Portal() {
             className={cn(
               "block p-4 rounded-lg border-2",
               color.bg,
-              color.border,
-              getRandomItem(sizes)
+              color.border
             )}
           >
             <div className="flex flex-col h-full text-gray-800 dark:text-white">
