@@ -36,4 +36,16 @@ export const portal: Portal[] = [
     href: "https://pomodoro.coraxi.com/",
     image: "/images/pomodoro.png",
   },
+  {
+    title: "Investment Portfolio Tracker",
+    description: "My personal investment portfolio tracker.",
+    href: "https://portfolio.coraxi.com/",
+    image: "/images/portfolio-tracker.png",
+  },
+  {
+    title: "Bucket List",
+    description: "My bucket list.",
+    href: "https://bucket.coraxi.com/",
+    image: "/images/bucket-list.png",
+  },
 ];
