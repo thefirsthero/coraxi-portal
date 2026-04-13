@@ -48,4 +48,49 @@ export const portal: Portal[] = [
     href: "https://bucket.coraxi.com/",
     image: "/images/bucket-list.png",
   },
+  {
+    title: "Bento PDF",
+    description:
+      "Fast PDF tools for merging, splitting, and organizing documents.",
+    href: "https://pdf.coraxi.com/",
+    image: "/images/bento-pdf.svg",
+  },
+  {
+    title: "ConvertX",
+    description: "A versatile file converter for documents, media, and more.",
+    href: "https://convertx.coraxi.com/",
+    image: "/images/convertx.svg",
+  },
+  {
+    title: "Budget Tracker",
+    description:
+      "Track spending, plan budgets, and monitor your financial goals.",
+    href: "https://budget.coraxi.com/",
+    image: "/images/budget-tracker.svg",
+  },
+  {
+    title: "Karakeep",
+    description: "Save websites and bookmarks to revisit and organize later.",
+    href: "https://karakeep.coraxi.com/",
+    image: "/images/karakeep.svg",
+  },
+  {
+    title: "Linkstack",
+    description: "A Linktree-style page to share all your important links.",
+    href: "https://linkstack.coraxi.com/",
+    image: "/images/linkstack.svg",
+  },
+  {
+    title: "MeTube",
+    description: "A simple YouTube downloader interface for quick saves.",
+    href: "https://metube.coraxi.com/",
+    image: "/images/metube.svg",
+  },
+  {
+    title: "PairDrop",
+    description:
+      "Instantly share files between nearby devices in your browser.",
+    href: "https://pairdrop.coraxi.com/",
+    image: "/images/pairdrop.svg",
+  },
 ];
