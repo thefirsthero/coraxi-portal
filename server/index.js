@@ -247,6 +247,55 @@ function normalizeSortOrder(value) {
   return Math.max(0, parseInteger(value, 0));
 }
 
+function moveIdToSortPosition(ids, id, targetPosition) {
+  const index = ids.indexOf(id);
+
+  if (index === -1) {
+    return ids;
+  }
+
+  const reordered = [...ids];
+  reordered.splice(index, 1);
+
+  const clampedTarget = Math.max(0, Math.min(targetPosition, reordered.length));
+  reordered.splice(clampedTarget, 0, id);
+
+  return reordered;
+}
+
+async function getPortalIdsForSortUpdate(client) {
+  const result = await client.query(
+    `
+    SELECT id
+    FROM public.portal_sites
+    ORDER BY sort_order ASC, id ASC
+    FOR UPDATE
+    `,
+  );
+
+  return result.rows.map((row) => row.id);
+}
+
+async function applyPortalSortOrder(client, orderedIds) {
+  if (!orderedIds.length) {
+    return;
+  }
+
+  await client.query(
+    `
+    WITH new_order AS (
+      SELECT id, ordinality - 1 AS sort_order
+      FROM unnest($1::int[]) WITH ORDINALITY AS t(id, ordinality)
+    )
+    UPDATE public.portal_sites AS p
+    SET sort_order = n.sort_order
+    FROM new_order AS n
+    WHERE p.id = n.id
+    `,
+    [orderedIds],
+  );
+}
+
 function mapPortalRow(row) {
   const hasUploadedImage = Boolean(row.has_uploaded_image);
 
@@ -444,15 +493,6 @@ app.post("/api/admin/portals", requireAuth, upload.single("imageFile"), async (r
     try {
       await client.query("BEGIN");
 
-      await client.query(
-        `
-        UPDATE public.portal_sites
-        SET sort_order = sort_order + 1
-        WHERE sort_order >= $1
-        `,
-        [targetSortOrder],
-      );
-
       const result = await client.query(
         `
         INSERT INTO public.portal_sites
@@ -474,8 +514,24 @@ app.post("/api/admin/portals", requireAuth, upload.single("imageFile"), async (r
         ],
       );
 
+      const insertedId = result.rows[0].id;
+      const orderedIds = await getPortalIdsForSortUpdate(client);
+      const reorderedIds = moveIdToSortPosition(orderedIds, insertedId, targetSortOrder);
+      await applyPortalSortOrder(client, reorderedIds);
+
+      const portalResult = await client.query(
+        `
+        SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+               (image_data IS NOT NULL) AS has_uploaded_image
+        FROM public.portal_sites
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [insertedId],
+      );
+
       await client.query("COMMIT");
-      return res.status(201).json({ portal: mapPortalRow(result.rows[0]) });
+      return res.status(201).json({ portal: mapPortalRow(portalResult.rows[0]) });
     } catch (dbErr) {
       await client.query("ROLLBACK");
       throw dbErr;
@@ -511,46 +567,15 @@ app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async
     try {
       await client.query("BEGIN");
 
-      const existing = await client.query(
-        `
-        SELECT sort_order
-        FROM public.portal_sites
-        WHERE id = $1
-        LIMIT 1
-        `,
-        [id],
-      );
+      const orderedIds = await getPortalIdsForSortUpdate(client);
 
-      if (existing.rowCount === 0) {
+      if (!orderedIds.includes(id)) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Portal entry not found" });
       }
 
-      const currentSortOrder = existing.rows[0].sort_order;
-
-      if (targetSortOrder < currentSortOrder) {
-        await client.query(
-          `
-          UPDATE public.portal_sites
-          SET sort_order = sort_order + 1
-          WHERE id <> $1
-            AND sort_order >= $2
-            AND sort_order < $3
-          `,
-          [id, targetSortOrder, currentSortOrder],
-        );
-      } else if (targetSortOrder > currentSortOrder) {
-        await client.query(
-          `
-          UPDATE public.portal_sites
-          SET sort_order = sort_order - 1
-          WHERE id <> $1
-            AND sort_order > $2
-            AND sort_order <= $3
-          `,
-          [id, currentSortOrder, targetSortOrder],
-        );
-      }
+      const reorderedIds = moveIdToSortPosition(orderedIds, id, targetSortOrder);
+      await applyPortalSortOrder(client, reorderedIds);
 
       const result = await client.query(
         `
@@ -561,8 +586,7 @@ app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async
             image = $4,
             image_data = CASE WHEN $8 THEN $5 ELSE image_data END,
             image_mime_type = CASE WHEN $8 THEN $6 ELSE image_mime_type END,
-            is_active = $9,
-            sort_order = $10
+            is_active = $9
         WHERE id = $7
         RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
                   (image_data IS NOT NULL) AS has_uploaded_image
@@ -577,7 +601,6 @@ app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async
           id,
           hasNewUploadedImage,
           parseBoolean(is_active, true),
-          targetSortOrder,
         ],
       );
 
