@@ -243,6 +243,10 @@ function parseInteger(value, defaultValue = 0) {
   return defaultValue;
 }
 
+function normalizeSortOrder(value) {
+  return Math.max(0, parseInteger(value, 0));
+}
+
 function mapPortalRow(row) {
   const hasUploadedImage = Boolean(row.has_uploaded_image);
 
@@ -433,29 +437,51 @@ app.post("/api/admin/portals", requireAuth, upload.single("imageFile"), async (r
 
     const resolvedImage = resolvePortalImage(image, href);
     const hasUploadedImage = Boolean(imageFile?.buffer);
+    const targetSortOrder = normalizeSortOrder(sort_order);
 
-    const result = await query(
-      `
-      INSERT INTO public.portal_sites
-        (title, description, href, image, image_data, image_mime_type, is_active, sort_order, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
-                (image_data IS NOT NULL) AS has_uploaded_image
-      `,
-      [
-        title,
-        description ?? "",
-        href,
-        resolvedImage,
-        hasUploadedImage ? imageFile.buffer : null,
-        hasUploadedImage ? imageFile.mimetype : null,
-        parseBoolean(is_active, true),
-        parseInteger(sort_order, 0),
-        req.user.userId,
-      ],
-    );
+    const client = await pool.connect();
 
-    return res.status(201).json({ portal: mapPortalRow(result.rows[0]) });
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `
+        UPDATE public.portal_sites
+        SET sort_order = sort_order + 1
+        WHERE sort_order >= $1
+        `,
+        [targetSortOrder],
+      );
+
+      const result = await client.query(
+        `
+        INSERT INTO public.portal_sites
+          (title, description, href, image, image_data, image_mime_type, is_active, sort_order, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+                  (image_data IS NOT NULL) AS has_uploaded_image
+        `,
+        [
+          title,
+          description ?? "",
+          href,
+          resolvedImage,
+          hasUploadedImage ? imageFile.buffer : null,
+          hasUploadedImage ? imageFile.mimetype : null,
+          parseBoolean(is_active, true),
+          targetSortOrder,
+          req.user.userId,
+        ],
+      );
+
+      await client.query("COMMIT");
+      return res.status(201).json({ portal: mapPortalRow(result.rows[0]) });
+    } catch (dbErr) {
+      await client.query("ROLLBACK");
+      throw dbErr;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error("POST /api/admin/portals error:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -478,41 +504,91 @@ app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async
 
     const resolvedImage = resolvePortalImage(image, href);
     const hasNewUploadedImage = Boolean(imageFile?.buffer);
+    const targetSortOrder = normalizeSortOrder(sort_order);
 
-    const result = await query(
-      `
-      UPDATE public.portal_sites
-      SET title = $1,
-          description = $2,
-          href = $3,
-          image = $4,
-          image_data = CASE WHEN $8 THEN $5 ELSE image_data END,
-          image_mime_type = CASE WHEN $8 THEN $6 ELSE image_mime_type END,
-          is_active = $9,
-          sort_order = $10
-      WHERE id = $7
-      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
-                (image_data IS NOT NULL) AS has_uploaded_image
-      `,
-      [
-        title,
-        description ?? "",
-        href,
-        resolvedImage,
-        hasNewUploadedImage ? imageFile.buffer : null,
-        hasNewUploadedImage ? imageFile.mimetype : null,
-        id,
-        hasNewUploadedImage,
-        parseBoolean(is_active, true),
-        parseInteger(sort_order, 0),
-      ],
-    );
+    const client = await pool.connect();
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: "Portal entry not found" });
+    try {
+      await client.query("BEGIN");
+
+      const existing = await client.query(
+        `
+        SELECT sort_order
+        FROM public.portal_sites
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [id],
+      );
+
+      if (existing.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Portal entry not found" });
+      }
+
+      const currentSortOrder = existing.rows[0].sort_order;
+
+      if (targetSortOrder < currentSortOrder) {
+        await client.query(
+          `
+          UPDATE public.portal_sites
+          SET sort_order = sort_order + 1
+          WHERE id <> $1
+            AND sort_order >= $2
+            AND sort_order < $3
+          `,
+          [id, targetSortOrder, currentSortOrder],
+        );
+      } else if (targetSortOrder > currentSortOrder) {
+        await client.query(
+          `
+          UPDATE public.portal_sites
+          SET sort_order = sort_order - 1
+          WHERE id <> $1
+            AND sort_order > $2
+            AND sort_order <= $3
+          `,
+          [id, currentSortOrder, targetSortOrder],
+        );
+      }
+
+      const result = await client.query(
+        `
+        UPDATE public.portal_sites
+        SET title = $1,
+            description = $2,
+            href = $3,
+            image = $4,
+            image_data = CASE WHEN $8 THEN $5 ELSE image_data END,
+            image_mime_type = CASE WHEN $8 THEN $6 ELSE image_mime_type END,
+            is_active = $9,
+            sort_order = $10
+        WHERE id = $7
+        RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+                  (image_data IS NOT NULL) AS has_uploaded_image
+        `,
+        [
+          title,
+          description ?? "",
+          href,
+          resolvedImage,
+          hasNewUploadedImage ? imageFile.buffer : null,
+          hasNewUploadedImage ? imageFile.mimetype : null,
+          id,
+          hasNewUploadedImage,
+          parseBoolean(is_active, true),
+          targetSortOrder,
+        ],
+      );
+
+      await client.query("COMMIT");
+      return res.json({ portal: mapPortalRow(result.rows[0]) });
+    } catch (dbErr) {
+      await client.query("ROLLBACK");
+      throw dbErr;
+    } finally {
+      client.release();
     }
-
-    return res.json({ portal: mapPortalRow(result.rows[0]) });
   } catch (err) {
     console.error("PUT /api/admin/portals/:id error:", err);
     return res.status(500).json({ error: "Internal server error" });
