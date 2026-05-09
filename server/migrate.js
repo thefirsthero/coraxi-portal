@@ -1,10 +1,4 @@
 import { query, pool } from "./db.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const createUpdateTimestampFunctionSql = `
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
@@ -44,42 +38,11 @@ FOR EACH ROW
 EXECUTE FUNCTION public.update_updated_at_column();
 `;
 
-const seedFromLegacyJsonSql = `
-INSERT INTO public.portal_sites (title, description, href, image, is_active, sort_order)
-SELECT
-  payload->>'title',
-  COALESCE(payload->>'description', ''),
-  payload->>'href',
-  COALESCE(payload->>'image', '/images/default-app.svg'),
-  true,
-  row_number() OVER () - 1
-FROM jsonb_array_elements($1::jsonb->'portals') payload
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM public.portal_sites existing
-  WHERE existing.href = payload->>'href'
-);
-`;
-
 async function runMigration() {
-  let legacyJson = process.env.LEGACY_PORTAL_JSON;
-
-  if (!legacyJson) {
-    const jsonPath = path.resolve(__dirname, "../public/portal-config.json");
-    if (fs.existsSync(jsonPath)) {
-      legacyJson = fs.readFileSync(jsonPath, "utf8");
-    }
-  }
-
   await query(createUpdateTimestampFunctionSql);
   await query(createPortalSitesTableSql);
   await query(createIndexesSql);
   await query(createTriggerSql);
-
-  if (legacyJson) {
-    await query(seedFromLegacyJsonSql, [legacyJson]);
-    console.log("Seeded portal_sites from legacy portal JSON");
-  }
 
   console.log("Migration completed");
 }
