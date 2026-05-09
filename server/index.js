@@ -14,6 +14,10 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
+
 function getAuthUser(req) {
   const token = req.cookies?.[getAuthCookieName()];
 
@@ -40,47 +44,52 @@ function requireAuth(req, res, next) {
 }
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body ?? {};
+  try {
+    const { email, password } = req.body ?? {};
 
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are required" });
-  }
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
 
-  const userResult = await query(
-    `
-    SELECT id, email, password_hash
-    FROM public.users
-    WHERE lower(email) = lower($1)
-    LIMIT 1
-    `,
-    [email],
-  );
+    const userResult = await query(
+      `
+      SELECT id, email, password_hash
+      FROM public.users
+      WHERE lower(email) = lower($1)
+      LIMIT 1
+      `,
+      [email],
+    );
 
-  const user = userResult.rows[0];
+    const user = userResult.rows[0];
 
-  if (!user) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
+    if (!user) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-  const isValid = await bcrypt.compare(password, user.password_hash);
+    const isValid = await bcrypt.compare(password, user.password_hash);
 
-  if (!isValid) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
+    if (!isValid) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
-  const token = signToken({
-    userId: user.id,
-    email: user.email,
-  });
-
-  setAuthCookie(res, token);
-
-  return res.json({
-    user: {
-      id: user.id,
+    const token = signToken({
+      userId: user.id,
       email: user.email,
-    },
-  });
+    });
+
+    setAuthCookie(res, token);
+
+    return res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    console.error("POST /api/auth/login error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -104,119 +113,142 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 app.get("/api/portals", async (_req, res) => {
-  const result = await query(
-    `
-    SELECT id, title, description, href, image
-    FROM public.portal_sites
-    WHERE is_active = true
-    ORDER BY sort_order ASC, id ASC
-    `,
-  );
-
-  return res.json({ portals: result.rows });
+  try {
+    const result = await query(
+      `
+      SELECT id, title, description, href, image
+      FROM public.portal_sites
+      WHERE is_active = true
+      ORDER BY sort_order ASC, id ASC
+      `,
+    );
+    return res.json({ portals: result.rows });
+  } catch (err) {
+    console.error("GET /api/portals error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.get("/api/admin/portals", requireAuth, async (_req, res) => {
-  const result = await query(
-    `
-    SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at
-    FROM public.portal_sites
-    ORDER BY sort_order ASC, id ASC
-    `,
-  );
-
-  return res.json({ portals: result.rows });
+  try {
+    const result = await query(
+      `
+      SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      FROM public.portal_sites
+      ORDER BY sort_order ASC, id ASC
+      `,
+    );
+    return res.json({ portals: result.rows });
+  } catch (err) {
+    console.error("GET /api/admin/portals error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 app.post("/api/admin/portals", requireAuth, async (req, res) => {
-  const { title, description, href, image, is_active, sort_order } = req.body ?? {};
+  try {
+    const { title, description, href, image, is_active, sort_order } = req.body ?? {};
 
-  if (!title || !href) {
-    return res.status(400).json({ error: "Title and href are required" });
+    if (!title || !href) {
+      return res.status(400).json({ error: "Title and href are required" });
+    }
+
+    const result = await query(
+      `
+      INSERT INTO public.portal_sites (title, description, href, image, is_active, sort_order, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      `,
+      [
+        title,
+        description ?? "",
+        href,
+        image ?? "/images/default-app.svg",
+        Boolean(is_active ?? true),
+        Number.isInteger(sort_order) ? sort_order : 0,
+        req.user.userId,
+      ],
+    );
+
+    return res.status(201).json({ portal: result.rows[0] });
+  } catch (err) {
+    console.error("POST /api/admin/portals error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
-
-  const result = await query(
-    `
-    INSERT INTO public.portal_sites (title, description, href, image, is_active, sort_order, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
-    `,
-    [
-      title,
-      description ?? "",
-      href,
-      image ?? "/images/default-app.svg",
-      Boolean(is_active ?? true),
-      Number.isInteger(sort_order) ? sort_order : 0,
-      req.user.userId,
-    ],
-  );
-
-  return res.status(201).json({ portal: result.rows[0] });
 });
 
 app.put("/api/admin/portals/:id", requireAuth, async (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
-  const { title, description, href, image, is_active, sort_order } = req.body ?? {};
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    const { title, description, href, image, is_active, sort_order } = req.body ?? {};
 
-  if (!Number.isInteger(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    if (!title || !href) {
+      return res.status(400).json({ error: "Title and href are required" });
+    }
+
+    const result = await query(
+      `
+      UPDATE public.portal_sites
+      SET title = $1,
+          description = $2,
+          href = $3,
+          image = $4,
+          is_active = $5,
+          sort_order = $6
+      WHERE id = $7
+      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      `,
+      [
+        title,
+        description ?? "",
+        href,
+        image ?? "/images/default-app.svg",
+        Boolean(is_active ?? true),
+        Number.isInteger(sort_order) ? sort_order : 0,
+        id,
+      ],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Portal entry not found" });
+    }
+
+    return res.json({ portal: result.rows[0] });
+  } catch (err) {
+    console.error("PUT /api/admin/portals/:id error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
-
-  if (!title || !href) {
-    return res.status(400).json({ error: "Title and href are required" });
-  }
-
-  const result = await query(
-    `
-    UPDATE public.portal_sites
-    SET title = $1,
-        description = $2,
-        href = $3,
-        image = $4,
-        is_active = $5,
-        sort_order = $6
-    WHERE id = $7
-    RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
-    `,
-    [
-      title,
-      description ?? "",
-      href,
-      image ?? "/images/default-app.svg",
-      Boolean(is_active ?? true),
-      Number.isInteger(sort_order) ? sort_order : 0,
-      id,
-    ],
-  );
-
-  if (result.rowCount === 0) {
-    return res.status(404).json({ error: "Portal entry not found" });
-  }
-
-  return res.json({ portal: result.rows[0] });
 });
 
 app.delete("/api/admin/portals/:id", requireAuth, async (req, res) => {
-  const id = Number.parseInt(req.params.id, 10);
+  try {
+    const id = Number.parseInt(req.params.id, 10);
 
-  if (!Number.isInteger(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    const result = await query(
+      `
+      DELETE FROM public.portal_sites
+      WHERE id = $1
+      `,
+      [id],
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Portal entry not found" });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/portals/:id error:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
-
-  const result = await query(
-    `
-    DELETE FROM public.portal_sites
-    WHERE id = $1
-    `,
-    [id],
-  );
-
-  if (result.rowCount === 0) {
-    return res.status(404).json({ error: "Portal entry not found" });
-  }
-
-  return res.json({ ok: true });
 });
 
 app.get("/api/health", (_req, res) => {
@@ -230,6 +262,12 @@ if (process.env.NODE_ENV === "production") {
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled Express error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
 
 const port = Number.parseInt(process.env.PORT || "8787", 10);
 
