@@ -78,7 +78,7 @@ const imageMimeByExtension = {
 async function ensurePortalSeedData() {
   for (let i = 0; i < defaultPortals.length; i += 1) {
     const item = defaultPortals[i];
-    const image = resolvePortalImage(item.image, item.href);
+    const image = item.image ?? resolvePortalImage(item.image, item.href);
     await query(
       `
       INSERT INTO public.portal_sites (title, description, href, image, is_active, sort_order, created_by)
