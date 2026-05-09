@@ -9,6 +9,7 @@ type PortalItem = {
   description: string;
   href: string;
   image: string;
+  has_uploaded_image: boolean;
   is_active: boolean;
   sort_order: number;
 };
@@ -48,7 +49,10 @@ export default function AdminPortals() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [removingImage, setRemovingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const editingItem = editingId ? items.find((item) => item.id === editingId) ?? null : null;
 
   async function loadPortals() {
     setLoading(true);
@@ -162,6 +166,37 @@ export default function AdminPortals() {
     }
   }
 
+  async function onRemoveUploadedImage() {
+    if (!editingId) {
+      return;
+    }
+
+    const confirmed = window.confirm("Remove uploaded image and switch back to favicon?");
+    if (!confirmed) {
+      return;
+    }
+
+    setRemovingImage(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/admin/portals/${editingId}/image`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(await parseError(response));
+      }
+
+      await loadPortals();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove image");
+    } finally {
+      setRemovingImage(false);
+    }
+  }
+
   async function onLogout() {
     await logout();
     window.location.assign("/admin/login");
@@ -218,8 +253,21 @@ export default function AdminPortals() {
         </div>
 
         <div className="space-y-1 md:col-span-1">
+          {editingItem ? (
+            <div className="mb-2 rounded-md border bg-muted/20 p-2">
+              <p className="text-xs font-medium">
+                Current image: {editingItem.has_uploaded_image ? "Uploaded to DB" : "External/fallback"}
+              </p>
+              <img
+                src={editingItem.image}
+                alt={`${editingItem.title} preview`}
+                className="mt-2 h-12 w-12 rounded object-cover"
+              />
+            </div>
+          ) : null}
+
           <label htmlFor="imageFile" className="text-sm font-medium">
-            Upload Image (optional)
+            Replace Image (optional)
           </label>
           <Input
             key={imageInputKey}
@@ -231,6 +279,19 @@ export default function AdminPortals() {
           <p className="text-xs text-muted-foreground">
             Leave empty to use the website favicon automatically.
           </p>
+
+          {editingItem?.has_uploaded_image ? (
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={onRemoveUploadedImage}
+              disabled={removingImage}
+              className="mt-2"
+            >
+              {removingImage ? "Removing..." : "Remove Uploaded Image"}
+            </Button>
+          ) : null}
         </div>
 
         <div className="space-y-1 md:col-span-1">

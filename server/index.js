@@ -252,6 +252,7 @@ function mapPortalRow(row) {
     description: row.description,
     href: row.href,
     image: hasUploadedImage ? `/api/portals/${row.id}/image` : row.image,
+    has_uploaded_image: hasUploadedImage,
     is_active: row.is_active,
     sort_order: row.sort_order,
     created_at: row.created_at,
@@ -514,6 +515,50 @@ app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async
     return res.json({ portal: mapPortalRow(result.rows[0]) });
   } catch (err) {
     console.error("PUT /api/admin/portals/:id error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.delete("/api/admin/portals/:id/image", requireAuth, async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    const existing = await query(
+      `
+      SELECT href
+      FROM public.portal_sites
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    if (existing.rowCount === 0) {
+      return res.status(404).json({ error: "Portal entry not found" });
+    }
+
+    const fallbackImage = resolvePortalImage(null, existing.rows[0].href);
+
+    const result = await query(
+      `
+      UPDATE public.portal_sites
+      SET image_data = NULL,
+          image_mime_type = NULL,
+          image = $2
+      WHERE id = $1
+      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+                (image_data IS NOT NULL) AS has_uploaded_image
+      `,
+      [id, fallbackImage],
+    );
+
+    return res.json({ portal: mapPortalRow(result.rows[0]) });
+  } catch (err) {
+    console.error("DELETE /api/admin/portals/:id/image error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
