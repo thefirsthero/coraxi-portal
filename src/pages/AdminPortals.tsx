@@ -17,7 +17,6 @@ type PortalPayload = {
   title: string;
   description: string;
   href: string;
-  image: string;
   is_active: boolean;
   sort_order: number;
 };
@@ -26,7 +25,6 @@ const emptyForm: PortalPayload = {
   title: "",
   description: "",
   href: "",
-  image: "",
   is_active: true,
   sort_order: 0,
 };
@@ -45,6 +43,8 @@ export default function AdminPortals() {
 
   const [items, setItems] = useState<PortalItem[]>([]);
   const [form, setForm] = useState<PortalPayload>(emptyForm);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageInputKey, setImageInputKey] = useState(0);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -79,6 +79,8 @@ export default function AdminPortals() {
   function startCreate() {
     setEditingId(null);
     setForm(emptyForm);
+    setImageFile(null);
+    setImageInputKey((prev) => prev + 1);
   }
 
   function startEdit(item: PortalItem) {
@@ -87,10 +89,11 @@ export default function AdminPortals() {
       title: item.title,
       description: item.description,
       href: item.href,
-      image: item.image,
       is_active: item.is_active,
       sort_order: item.sort_order,
     });
+    setImageFile(null);
+    setImageInputKey((prev) => prev + 1);
   }
 
   async function onSave(event: FormEvent<HTMLFormElement>) {
@@ -102,13 +105,21 @@ export default function AdminPortals() {
       const url = editingId ? `/api/admin/portals/${editingId}` : "/api/admin/portals";
       const method = editingId ? "PUT" : "POST";
 
+      const payload = new FormData();
+      payload.append("title", form.title);
+      payload.append("description", form.description);
+      payload.append("href", form.href);
+      payload.append("is_active", String(form.is_active));
+      payload.append("sort_order", String(form.sort_order));
+
+      if (imageFile) {
+        payload.append("imageFile", imageFile);
+      }
+
       const response = await fetch(url, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-        },
         credentials: "include",
-        body: JSON.stringify(form),
+        body: payload,
       });
 
       if (!response.ok) {
@@ -207,15 +218,19 @@ export default function AdminPortals() {
         </div>
 
         <div className="space-y-1 md:col-span-1">
-          <label htmlFor="image" className="text-sm font-medium">
-            Image URL (optional)
+          <label htmlFor="imageFile" className="text-sm font-medium">
+            Upload Image (optional)
           </label>
           <Input
-            id="image"
-            value={form.image}
-            onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
-            placeholder="https://... (leave empty to use site favicon)"
+            key={imageInputKey}
+            id="imageFile"
+            type="file"
+            accept="image/*"
+            onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
           />
+          <p className="text-xs text-muted-foreground">
+            Leave empty to use the website favicon automatically.
+          </p>
         </div>
 
         <div className="space-y-1 md:col-span-1">

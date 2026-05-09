@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
+import multer from "multer";
 import { clearAuthCookie, getAuthCookieName, setAuthCookie, signToken, verifyToken } from "./auth.js";
 import { pool, query } from "./db.js";
 import { defaultPortals, resolvePortalImage } from "./portal-seed.js";
@@ -49,6 +50,12 @@ CREATE INDEX IF NOT EXISTS idx_portal_sites_is_active ON public.portal_sites(is_
 CREATE INDEX IF NOT EXISTS idx_portal_sites_sort_order ON public.portal_sites(sort_order);
 `;
 
+const createPortalImageColumnsSql = `
+ALTER TABLE public.portal_sites
+  ADD COLUMN IF NOT EXISTS image_data BYTEA,
+  ADD COLUMN IF NOT EXISTS image_mime_type TEXT;
+`;
+
 const createPortalSitesTriggerSql = `
 DROP TRIGGER IF EXISTS update_portal_sites_updated_at ON public.portal_sites;
 CREATE TRIGGER update_portal_sites_updated_at
@@ -82,8 +89,73 @@ async function ensureSchema() {
   await query(createUpdateTimestampFunctionSql);
   await query(createPortalSitesTableSql);
   await query(createPortalSitesIndexesSql);
+  await query(createPortalImageColumnsSql);
   await query(createPortalSitesTriggerSql);
   await ensurePortalSeedData();
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (!file.mimetype?.startsWith("image/")) {
+      cb(new Error("Only image files are allowed"));
+      return;
+    }
+
+    cb(null, true);
+  },
+});
+
+function parseBoolean(value, defaultValue = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "0", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return defaultValue;
+}
+
+function parseInteger(value, defaultValue = 0) {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed)) {
+      return parsed;
+    }
+  }
+
+  return defaultValue;
+}
+
+function mapPortalRow(row) {
+  const hasUploadedImage = Boolean(row.has_uploaded_image);
+
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    href: row.href,
+    image: hasUploadedImage ? `/api/portals/${row.id}/image` : row.image,
+    is_active: row.is_active,
+    sort_order: row.sort_order,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 function getAuthUser(req) {
@@ -180,17 +252,51 @@ app.get("/api/auth/me", (req, res) => {
   });
 });
 
+app.get("/api/portals/:id/image", async (req, res) => {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: "Invalid id" });
+    }
+
+    const result = await query(
+      `
+      SELECT image_data, image_mime_type
+      FROM public.portal_sites
+      WHERE id = $1 AND is_active = true
+      LIMIT 1
+      `,
+      [id],
+    );
+
+    const row = result.rows[0];
+
+    if (!row || !row.image_data) {
+      return res.status(404).json({ error: "Image not found" });
+    }
+
+    res.setHeader("Content-Type", row.image_mime_type || "application/octet-stream");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.send(row.image_data);
+  } catch (err) {
+    console.error("GET /api/portals/:id/image error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 app.get("/api/portals", async (_req, res) => {
   try {
     const result = await query(
       `
-      SELECT id, title, description, href, image
+      SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+             (image_data IS NOT NULL) AS has_uploaded_image
       FROM public.portal_sites
       WHERE is_active = true
       ORDER BY sort_order ASC, id ASC
       `,
     );
-    return res.json({ portals: result.rows });
+    return res.json({ portals: result.rows.map(mapPortalRow) });
   } catch (err) {
     console.error("GET /api/portals error:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -201,54 +307,64 @@ app.get("/api/admin/portals", requireAuth, async (_req, res) => {
   try {
     const result = await query(
       `
-      SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      SELECT id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+             (image_data IS NOT NULL) AS has_uploaded_image
       FROM public.portal_sites
       ORDER BY sort_order ASC, id ASC
       `,
     );
-    return res.json({ portals: result.rows });
+    return res.json({ portals: result.rows.map(mapPortalRow) });
   } catch (err) {
     console.error("GET /api/admin/portals error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-app.post("/api/admin/portals", requireAuth, async (req, res) => {
+app.post("/api/admin/portals", requireAuth, upload.single("imageFile"), async (req, res) => {
   try {
     const { title, description, href, image, is_active, sort_order } = req.body ?? {};
+    const imageFile = req.file;
 
     if (!title || !href) {
       return res.status(400).json({ error: "Title and href are required" });
     }
 
+    const resolvedImage = resolvePortalImage(image, href);
+    const hasUploadedImage = Boolean(imageFile?.buffer);
+
     const result = await query(
       `
-      INSERT INTO public.portal_sites (title, description, href, image, is_active, sort_order, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      INSERT INTO public.portal_sites
+        (title, description, href, image, image_data, image_mime_type, is_active, sort_order, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+                (image_data IS NOT NULL) AS has_uploaded_image
       `,
       [
         title,
         description ?? "",
         href,
-        resolvePortalImage(image, href),
-        Boolean(is_active ?? true),
-        Number.isInteger(sort_order) ? sort_order : 0,
+        resolvedImage,
+        hasUploadedImage ? imageFile.buffer : null,
+        hasUploadedImage ? imageFile.mimetype : null,
+        parseBoolean(is_active, true),
+        parseInteger(sort_order, 0),
         req.user.userId,
       ],
     );
 
-    return res.status(201).json({ portal: result.rows[0] });
+    return res.status(201).json({ portal: mapPortalRow(result.rows[0]) });
   } catch (err) {
     console.error("POST /api/admin/portals error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
 
-app.put("/api/admin/portals/:id", requireAuth, async (req, res) => {
+app.put("/api/admin/portals/:id", requireAuth, upload.single("imageFile"), async (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
     const { title, description, href, image, is_active, sort_order } = req.body ?? {};
+    const imageFile = req.file;
 
     if (!Number.isInteger(id)) {
       return res.status(400).json({ error: "Invalid id" });
@@ -258,6 +374,9 @@ app.put("/api/admin/portals/:id", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Title and href are required" });
     }
 
+    const resolvedImage = resolvePortalImage(image, href);
+    const hasNewUploadedImage = Boolean(imageFile?.buffer);
+
     const result = await query(
       `
       UPDATE public.portal_sites
@@ -265,19 +384,25 @@ app.put("/api/admin/portals/:id", requireAuth, async (req, res) => {
           description = $2,
           href = $3,
           image = $4,
-          is_active = $5,
-          sort_order = $6
+          image_data = CASE WHEN $8 THEN $5 ELSE image_data END,
+          image_mime_type = CASE WHEN $8 THEN $6 ELSE image_mime_type END,
+          is_active = $9,
+          sort_order = $10
       WHERE id = $7
-      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at
+      RETURNING id, title, description, href, image, is_active, sort_order, created_at, updated_at,
+                (image_data IS NOT NULL) AS has_uploaded_image
       `,
       [
         title,
         description ?? "",
         href,
-        resolvePortalImage(image, href),
-        Boolean(is_active ?? true),
-        Number.isInteger(sort_order) ? sort_order : 0,
+        resolvedImage,
+        hasNewUploadedImage ? imageFile.buffer : null,
+        hasNewUploadedImage ? imageFile.mimetype : null,
         id,
+        hasNewUploadedImage,
+        parseBoolean(is_active, true),
+        parseInteger(sort_order, 0),
       ],
     );
 
@@ -285,7 +410,7 @@ app.put("/api/admin/portals/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Portal entry not found" });
     }
 
-    return res.json({ portal: result.rows[0] });
+    return res.json({ portal: mapPortalRow(result.rows[0]) });
   } catch (err) {
     console.error("PUT /api/admin/portals/:id error:", err);
     return res.status(500).json({ error: "Internal server error" });
@@ -333,8 +458,16 @@ if (process.env.NODE_ENV === "production") {
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ error: "Image file is too large (max 5MB)" });
+  }
+
+  if (err?.message === "Only image files are allowed") {
+    return res.status(400).json({ error: err.message });
+  }
+
   console.error("Unhandled Express error:", err);
-  res.status(500).json({ error: "Internal server error" });
+  return res.status(500).json({ error: "Internal server error" });
 });
 
 const port = Number.parseInt(process.env.PORT || "8787", 10);
