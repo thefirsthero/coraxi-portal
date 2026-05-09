@@ -26,7 +26,7 @@ const emptyForm: PortalPayload = {
   title: "",
   description: "",
   href: "",
-  image: "/images/default-app.svg",
+  image: "",
   is_active: true,
   sort_order: 0,
 };
@@ -208,12 +208,13 @@ export default function AdminPortals() {
 
         <div className="space-y-1 md:col-span-1">
           <label htmlFor="image" className="text-sm font-medium">
-            Image Path
+            Image URL (optional)
           </label>
           <Input
             id="image"
             value={form.image}
             onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
+            placeholder="https://... (leave empty to use site favicon)"
           />
         </div>
 
