@@ -18,6 +18,51 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection:", reason);
 });
 
+const createUpdateTimestampFunctionSql = `
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ language 'plpgsql';
+`;
+
+const createPortalSitesTableSql = `
+CREATE TABLE IF NOT EXISTS public.portal_sites (
+  id SERIAL PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  href TEXT NOT NULL UNIQUE,
+  image TEXT NOT NULL DEFAULT '/images/default-app.svg',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
+const createPortalSitesIndexesSql = `
+CREATE INDEX IF NOT EXISTS idx_portal_sites_is_active ON public.portal_sites(is_active);
+CREATE INDEX IF NOT EXISTS idx_portal_sites_sort_order ON public.portal_sites(sort_order);
+`;
+
+const createPortalSitesTriggerSql = `
+DROP TRIGGER IF EXISTS update_portal_sites_updated_at ON public.portal_sites;
+CREATE TRIGGER update_portal_sites_updated_at
+BEFORE UPDATE ON public.portal_sites
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+`;
+
+async function ensureSchema() {
+  await query(createUpdateTimestampFunctionSql);
+  await query(createPortalSitesTableSql);
+  await query(createPortalSitesIndexesSql);
+  await query(createPortalSitesTriggerSql);
+}
+
 function getAuthUser(req) {
   const token = req.cookies?.[getAuthCookieName()];
 
@@ -271,9 +316,19 @@ app.use((err, _req, res, _next) => {
 
 const port = Number.parseInt(process.env.PORT || "8787", 10);
 
-app.listen(port, () => {
-  console.log(`API server listening on port ${port}`);
-});
+async function startServer() {
+  try {
+    await ensureSchema();
+    app.listen(port, () => {
+      console.log(`API server listening on port ${port}`);
+    });
+  } catch (err) {
+    console.error("Failed to initialize database schema:", err);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 process.on("SIGINT", async () => {
   await pool.end();
