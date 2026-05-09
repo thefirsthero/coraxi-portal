@@ -9,6 +9,14 @@ export default defineConfig(({ mode }) => {
   return {
     base: env.VITE_BASE_URL ?? "/",
     plugins: [react(), tailwindcss()],
+    server: {
+      proxy: {
+        "/api": {
+          target: env.VITE_API_PROXY_TARGET ?? "http://localhost:8787",
+          changeOrigin: true,
+        },
+      },
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

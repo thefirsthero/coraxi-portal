@@ -1,4 +1,5 @@
 import { BrowserRouter, HashRouter } from "react-router";
+import { AuthProvider } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Router from "./Router";
 
@@ -8,9 +9,11 @@ const AppRouter =
 export default function App() {
   return (
     <ThemeProvider>
-      <AppRouter>
-        <Router />
-      </AppRouter>
+      <AuthProvider>
+        <AppRouter>
+          <Router />
+        </AppRouter>
+      </AuthProvider>
     </ThemeProvider>
   );
 }
