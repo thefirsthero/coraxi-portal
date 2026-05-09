@@ -1,5 +1,4 @@
 import express from "express";
-import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import cookieParser from "cookie-parser";
@@ -37,7 +36,7 @@ CREATE TABLE IF NOT EXISTS public.portal_sites (
   title VARCHAR(255) NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   href TEXT NOT NULL UNIQUE,
-  image TEXT NOT NULL DEFAULT '/images/default-app.svg',
+  image TEXT NOT NULL DEFAULT 'https://icons.duckduckgo.com/ip3/example.com.ico',
   is_active BOOLEAN NOT NULL DEFAULT true,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
@@ -65,16 +64,6 @@ FOR EACH ROW
 EXECUTE FUNCTION public.update_updated_at_column();
 `;
 
-const imageMimeByExtension = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-};
-
 async function ensurePortalSeedData() {
   for (let i = 0; i < defaultPortals.length; i += 1) {
     const item = defaultPortals[i];
@@ -96,95 +85,6 @@ async function ensurePortalSeedData() {
   }
 }
 
-function getLocalImageRelativePath(imageValue) {
-  if (typeof imageValue !== "string") {
-    return null;
-  }
-
-  const trimmed = imageValue.trim();
-
-  if (!trimmed || trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return null;
-  }
-
-  const normalized = trimmed.replace(/^\/+/, "");
-
-  if (normalized.includes("..")) {
-    return null;
-  }
-
-  if (!(normalized.startsWith("images/") || normalized.startsWith("avatars/"))) {
-    return null;
-  }
-
-  return normalized;
-}
-
-async function readFirstExistingFile(candidates) {
-  for (const candidate of candidates) {
-    try {
-      const content = await fs.readFile(candidate);
-      return { content, path: candidate };
-    } catch {
-      // Ignore missing files and continue.
-    }
-  }
-
-  return null;
-}
-
-function resolveMimeTypeFromPath(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  return imageMimeByExtension[ext] ?? "application/octet-stream";
-}
-
-async function ensureUploadedImagesFromRepoAssets() {
-  const result = await query(
-    `
-    SELECT id, image
-    FROM public.portal_sites
-    WHERE image_data IS NULL
-    `,
-  );
-
-  let importedCount = 0;
-
-  for (const row of result.rows) {
-    const relativeImagePath = getLocalImageRelativePath(row.image);
-
-    if (!relativeImagePath) {
-      continue;
-    }
-
-    const candidates = [
-      path.resolve(__dirname, "../public", relativeImagePath),
-      path.resolve(__dirname, "../dist", relativeImagePath),
-    ];
-
-    const match = await readFirstExistingFile(candidates);
-
-    if (!match) {
-      continue;
-    }
-
-    await query(
-      `
-      UPDATE public.portal_sites
-      SET image_data = $1,
-          image_mime_type = $2
-      WHERE id = $3
-      `,
-      [match.content, resolveMimeTypeFromPath(match.path), row.id],
-    );
-
-    importedCount += 1;
-  }
-
-  if (importedCount > 0) {
-    console.log(`Imported ${importedCount} portal images from local assets into DB.`);
-  }
-}
-
 async function ensureSchema() {
   await query(createUpdateTimestampFunctionSql);
   await query(createPortalSitesTableSql);
@@ -192,7 +92,6 @@ async function ensureSchema() {
   await query(createPortalImageColumnsSql);
   await query(createPortalSitesTriggerSql);
   await ensurePortalSeedData();
-  await ensureUploadedImagesFromRepoAssets();
 }
 
 const upload = multer({

@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS public.portal_sites (
   title VARCHAR(255) NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   href TEXT NOT NULL UNIQUE,
-  image TEXT NOT NULL DEFAULT '/images/default-app.svg',
+  image TEXT NOT NULL DEFAULT 'https://icons.duckduckgo.com/ip3/example.com.ico',
   is_active BOOLEAN NOT NULL DEFAULT true,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
